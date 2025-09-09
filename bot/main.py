@@ -2,31 +2,12 @@ import asyncio
 import logging
 import os
 
-from aiogram import Bot, Dispatcher, types, Router
+from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import Command
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
 from .logging_conf import init_logging
-
-
-router = Router()
-
-
-@router.message(Command("ping"))
-async def handle_ping(message: types.Message) -> None:
-    logging.info("/ping from chat_id=%s", message.chat.id)
-    await message.answer("pong")
-
-
-@router.message()
-async def handle_any(message: types.Message) -> None:
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="/ping")]],
-        resize_keyboard=True,
-    )
-    await message.answer("Привет! Я готов. Попробуйте /ping", reply_markup=kb)
+from .handlers import router
 
 
 async def main() -> None:

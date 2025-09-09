@@ -6,4 +6,4 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
 }
 
 Write-Host "Starting bot..." -ForegroundColor Cyan
-.\.venv\Scripts\python.exe bot\main.py
+.\.venv\Scripts\python.exe -m bot.main
