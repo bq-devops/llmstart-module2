@@ -28,10 +28,27 @@ class LLMClient:
                 "LLM_BASE_URL и LLM_API_KEY должны быть установлены в .env"
             )
         
-        self.client = openai.OpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key
-        )
+        # Создаем клиент с минимальными параметрами для совместимости
+        try:
+            # Пробуем создать клиент с base_url
+            self.client = openai.OpenAI(
+                base_url=self.base_url,
+                api_key=self.api_key
+            )
+        except Exception as e:
+            if "proxies" in str(e) or "unexpected keyword argument" in str(e):
+                # Fallback для проблемных версий openai - используем httpx напрямую
+                logging.warning("Используем fallback инициализацию LLM клиента: %s", str(e))
+                import httpx
+                # Создаем клиент с кастомным http_client
+                http_client = httpx.Client()
+                self.client = openai.OpenAI(
+                    api_key=self.api_key,
+                    base_url=self.base_url,
+                    http_client=http_client
+                )
+            else:
+                raise
         
         logging.info("LLM клиент инициализирован: %s", self.base_url)
     
@@ -56,16 +73,19 @@ class LLMClient:
                 temperature=0.7
             )
             
-            answer = response.choices[0].message.content
-            logging.info("LLM ответ получен, длина: %d символов", len(answer))
-            return answer or "Извините, не удалось получить ответ."
+            if response.choices and len(response.choices) > 0:
+                answer = response.choices[0].message.content
+                logging.info("LLM ответ получен, длина: %d символов", len(answer))
+                return answer or "Извините, не удалось получить ответ."
+            else:
+                logging.error("LLM вернул пустой ответ")
+                from .prompt import FALLBACK_MESSAGE
+                return FALLBACK_MESSAGE
             
         except Exception as e:
             logging.error("Ошибка LLM: %s", str(e))
-            return (
-                "Сервис временно недоступен. "
-                "Давайте обменяемся контактами для консультации."
-            )
+            from .prompt import FALLBACK_MESSAGE
+            return FALLBACK_MESSAGE
 
 
 # Глобальный экземпляр клиента

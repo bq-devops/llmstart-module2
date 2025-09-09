@@ -30,6 +30,43 @@ def get_dialog_state(chat_id: int) -> Dict[str, Any]:
     return dialog_states[chat_id]
 
 
+def is_returning_user(chat_id: int) -> bool:
+    """Проверить, является ли пользователь возвратным (есть незавершенная сессия)."""
+    if chat_id not in dialog_states:
+        return False
+    
+    state = dialog_states[chat_id]
+    current_stage = state.get('stage', 'greeting')
+    
+    # Возвратный пользователь, если диалог не завершен
+    return current_stage not in ['done', 'greeting']
+
+
+def get_continuation_message(chat_id: int) -> str:
+    """Получить сообщение для продолжения диалога возвратного пользователя."""
+    state = get_dialog_state(chat_id)
+    current_stage = state.get('stage', 'greeting')
+    
+    if current_stage == 'qualifying':
+        answers = state.get('answers', {})
+        if 'intent' not in answers:
+            return "Продолжим нашу беседу! Расскажите, что вас интересует?"
+        elif 'budget' not in answers:
+            return "Какой у вас примерный бюджет на этот проект?"
+        elif 'timeline' not in answers:
+            return "Когда бы вы хотели получить готовый результат?"
+        elif 'priority' not in answers:
+            return "Что для вас наиболее важно в этом проекте?"
+    
+    elif current_stage == 'offering':
+        return "Хотели бы оставить контакт для обсуждения деталей?"
+    
+    elif current_stage == 'collecting_contact':
+        return "Пожалуйста, оставьте ваш контакт для связи."
+    
+    return "Продолжим нашу беседу!"
+
+
 def update_dialog_stage(chat_id: int, stage: str) -> None:
     """Обновить стадию диалога."""
     state = get_dialog_state(chat_id)
@@ -46,35 +83,68 @@ def save_answer(chat_id: int, question: str, answer: str) -> None:
 
 @router.message(Command("start"))
 async def handle_start(message: types.Message) -> None:
-    """Обработчик команды /start - приветствие нового пользователя."""
+    """Обработчик команды /start - приветствие нового пользователя или продолжение диалога."""
     chat_id = message.chat.id
     
-    # Сброс состояния для нового диалога
-    dialog_states[chat_id] = {
-        'stage': 'greeting',
-        'answers': {},
-        'last_llm_suggestion': '',
-        'started_at': datetime.now().isoformat()
-    }
-    
-    logging.info("/start от chat_id=%s", chat_id)
-    
-    welcome_text = (
-        "👋 Привет! Я помогу вам выбрать подходящие IT-услуги.\n\n"
-        "Расскажите, пожалуйста, что вас интересует? "
-        "Например, нужен ли вам сайт, мобильное приложение или автоматизация процессов?"
-    )
-    
-    kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Нужен сайт"), KeyboardButton(text="Мобильное приложение")],
-            [KeyboardButton(text="Автоматизация"), KeyboardButton(text="Консультация")],
-        ],
-        resize_keyboard=True,
-    )
-    
-    await message.answer(welcome_text, reply_markup=kb)
-    update_dialog_stage(chat_id, 'qualifying')
+    # Проверяем, является ли пользователь возвратным
+    if is_returning_user(chat_id):
+        logging.info("/start от возвратного пользователя chat_id=%s", chat_id)
+        
+        continuation_text = get_continuation_message(chat_id)
+        await message.answer(f"👋 С возвращением! {continuation_text}")
+        
+        # Продолжаем диалог с текущей стадии
+        state = get_dialog_state(chat_id)
+        current_stage = state.get('stage', 'greeting')
+        
+        if current_stage == 'qualifying':
+            # Показываем клавиатуру для квалификации
+            kb = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="Нужен сайт"), KeyboardButton(text="Мобильное приложение")],
+                    [KeyboardButton(text="Автоматизация"), KeyboardButton(text="Консультация")],
+                ],
+                resize_keyboard=True,
+            )
+            await message.answer("Выберите вариант или напишите свой:", reply_markup=kb)
+        elif current_stage == 'offering':
+            # Показываем клавиатуру для предложения
+            kb = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="Да, оставлю контакт"), KeyboardButton(text="Пока не готов")],
+                ],
+                resize_keyboard=True,
+            )
+            await message.answer("Выберите вариант:", reply_markup=kb)
+        # Для collecting_contact не показываем клавиатуру, ждем ввод контакта
+        
+    else:
+        # Новый пользователь - сброс состояния
+        dialog_states[chat_id] = {
+            'stage': 'greeting',
+            'answers': {},
+            'last_llm_suggestion': '',
+            'started_at': datetime.now().isoformat()
+        }
+        
+        logging.info("/start от нового пользователя chat_id=%s", chat_id)
+        
+        welcome_text = (
+            "👋 Привет! Я помогу вам выбрать подходящие IT-услуги.\n\n"
+            "Расскажите, пожалуйста, что вас интересует? "
+            "Например, нужен ли вам сайт, мобильное приложение или автоматизация процессов?"
+        )
+        
+        kb = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="Нужен сайт"), KeyboardButton(text="Мобильное приложение")],
+                [KeyboardButton(text="Автоматизация"), KeyboardButton(text="Консультация")],
+            ],
+            resize_keyboard=True,
+        )
+        
+        await message.answer(welcome_text, reply_markup=kb)
+        update_dialog_stage(chat_id, 'qualifying')
 
 
 @router.message(Command("ping"))
@@ -82,6 +152,23 @@ async def handle_ping(message: types.Message) -> None:
     """Обработчик команды /ping."""
     logging.info("/ping от chat_id=%s", message.chat.id)
     await message.answer("pong")
+
+
+@router.message(Command("reset"))
+async def handle_reset(message: types.Message) -> None:
+    """Обработчик команды /reset - сброс диалога."""
+    chat_id = message.chat.id
+    
+    # Сбрасываем состояние диалога
+    dialog_states[chat_id] = {
+        'stage': 'greeting',
+        'answers': {},
+        'last_llm_suggestion': '',
+        'started_at': datetime.now().isoformat()
+    }
+    
+    logging.info("/reset от chat_id=%s", chat_id)
+    await message.answer("✅ Диалог сброшен. Напишите /start для начала новой консультации.")
 
 
 @router.message(Command("ask"))
@@ -104,10 +191,8 @@ async def handle_ask(message: types.Message) -> None:
         await message.answer(answer)
     except Exception as e:
         logging.error("Ошибка при обработке /ask: %s", str(e))
-        await message.answer(
-            "Извините, произошла ошибка. "
-            "Попробуйте позже или оставьте контакт для консультации."
-        )
+        from .prompt import FALLBACK_MESSAGE
+        await message.answer(FALLBACK_MESSAGE)
 
 
 @router.message()
@@ -193,6 +278,26 @@ async def handle_qualifying_stage(message: types.Message, user_text: str) -> Non
     elif 'timeline' not in state['answers']:
         save_answer(chat_id, 'timeline', user_text)
         
+        # Задаем вопрос о контексте/приоритетах
+        next_question = (
+            "Понятно! А что для вас наиболее важно в этом проекте? "
+            "Например, скорость разработки, качество, уникальный дизайн или что-то другое?"
+        )
+        
+        kb = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="Скорость разработки"), KeyboardButton(text="Качество")],
+                [KeyboardButton(text="Уникальный дизайн"), KeyboardButton(text="Простота использования")],
+                [KeyboardButton(text="Другое")],
+            ],
+            resize_keyboard=True,
+        )
+        
+        await message.answer(next_question, reply_markup=kb)
+        
+    elif 'priority' not in state['answers']:
+        save_answer(chat_id, 'priority', user_text)
+        
         # Переходим к стадии предложения
         update_dialog_stage(chat_id, 'offering')
         await handle_offering_stage(message, user_text)
@@ -207,13 +312,17 @@ async def handle_offering_stage(message: types.Message, user_text: str) -> None:
     try:
         llm_client = get_llm_client()
         
+        from .prompt import RECOMMENDATION_PROMPT
+        
         context = f"""
         Потребность клиента: {state['answers'].get('intent', 'не указано')}
         Бюджет: {state['answers'].get('budget', 'не указано')}
         Сроки: {state['answers'].get('timeline', 'не указано')}
+        Приоритеты: {state['answers'].get('priority', 'не указано')}
         """
         
-        question = f"На основе этой информации дай краткую рекомендацию: {context}"
+        # Формируем структурированный запрос
+        question = f"{RECOMMENDATION_PROMPT}\n\nИнформация о клиенте:\n{context}"
         recommendation = await llm_client.ask_question(question)
         
         state['last_llm_suggestion'] = recommendation
@@ -236,10 +345,8 @@ async def handle_offering_stage(message: types.Message, user_text: str) -> None:
         
     except Exception as e:
         logging.error("Ошибка при формировании рекомендации: %s", str(e))
-        await message.answer(
-            "Извините, не удалось сформировать рекомендацию. "
-            "Давайте обменяемся контактами для консультации?"
-        )
+        from .prompt import FALLBACK_MESSAGE
+        await message.answer(FALLBACK_MESSAGE)
         update_dialog_stage(chat_id, 'collecting_contact')
 
 
@@ -271,13 +378,41 @@ async def handle_contact_stage(message: types.Message, user_text: str) -> None:
         # Пользователь оставил контакт
         save_answer(chat_id, 'contact', user_text)
         
-        # TODO: В следующей итерации добавим сохранение в CSV
-        success_message = (
-            "✅ Спасибо! Ваш контакт сохранен.\n\n"
-            "Наш менеджер свяжется с вами в ближайшее время "
-            "для обсуждения деталей проекта.\n\n"
-            "Если у вас есть вопросы, пишите /start для новой консультации!"
-        )
+        # Сохраняем лид в CSV
+        try:
+            from .lead_store import get_lead_store
+            
+            lead_store = get_lead_store()
+            success = lead_store.save_lead_from_dialog(
+                chat_id=chat_id,
+                dialog_state=state,
+                contact=user_text,
+                client_name=""  # Имя не собираем отдельно
+            )
+            
+            if success:
+                success_message = (
+                    "✅ Спасибо! Ваш контакт сохранен.\n\n"
+                    "Наш менеджер свяжется с вами в ближайшее время "
+                    "для обсуждения деталей проекта.\n\n"
+                    "Если у вас есть вопросы, пишите /start для новой консультации!"
+                )
+                logging.info("Лид успешно сохранен в CSV: chat_id=%s", chat_id)
+            else:
+                success_message = (
+                    "✅ Спасибо! Ваш контакт получен.\n\n"
+                    "Наш менеджер свяжется с вами в ближайшее время.\n\n"
+                    "Если у вас есть вопросы, пишите /start для новой консультации!"
+                )
+                logging.warning("Не удалось сохранить лид в CSV: chat_id=%s", chat_id)
+                
+        except Exception as e:
+            logging.error("Ошибка при сохранении лида: %s", str(e))
+            success_message = (
+                "✅ Спасибо! Ваш контакт получен.\n\n"
+                "Наш менеджер свяжется с вами в ближайшее время.\n\n"
+                "Если у вас есть вопросы, пишите /start для новой консультации!"
+            )
         
         await message.answer(success_message)
         update_dialog_stage(chat_id, 'done')
