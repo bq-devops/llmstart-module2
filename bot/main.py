@@ -8,6 +8,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
+from .logging_conf import init_logging
 
 
 router = Router()
@@ -15,6 +16,7 @@ router = Router()
 
 @router.message(Command("ping"))
 async def handle_ping(message: types.Message) -> None:
+    logging.info("/ping from chat_id=%s", message.chat.id)
     await message.answer("pong")
 
 
@@ -37,10 +39,7 @@ async def main() -> None:
     if not telegram_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set in environment (.env or config/env)")
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    init_logging()
 
     bot = Bot(
         token=telegram_token,
