@@ -1,4 +1,12 @@
+# Telegram Bot Framework
 aiogram==3.10.0
+
+# Environment Variables Management
 python-dotenv==1.0.1
+
+# OpenAI-compatible API Client
 openai==1.12.0
+
+# Note: httpx is used internally by openai client for fallback compatibility
+# No need to add it explicitly as it's handled by openai package
 
